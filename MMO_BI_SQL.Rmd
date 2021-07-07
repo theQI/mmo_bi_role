@@ -1,0 +1,69 @@
+---
+title: "MMO BI Role SQL Questions"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r, echo=F,include=F}
+# Create local table in spark to use SQL
+library(readxl)
+library(sparklyr)
+library(dplyr)
+sc <- spark_connect(master = "local")
+caseTable <- read_xlsx("Interview Table(SQL).xlsx",sheet = "CaseTable")%>%
+  mutate(MemberID = as.character(MemberID),
+         Dependent = as.character(Dependent))
+copy_to(sc,caseTable)
+providerTable <- read_xlsx("Interview Table(SQL).xlsx",sheet = "ProviderTable")%>%
+  mutate(MemberID = as.character(MemberID))
+copy_to(sc,providerTable)
+memberTable <- read_xlsx("Interview Table(SQL).xlsx",sheet = "MemberTable")%>%
+  mutate(MemberID = as.character(MemberID))
+copy_to(sc,memberTable)
+```
+
+# Problem 1
+```{sql,connection=sc}
+/*
+This query is built in spark sql, only change you have to do to run this in sql server is to replace the DATEDIFF(FistDate,SecondDate) function with DATEDIFF(interval,FirstDate,SecondDate), commented inline
+*/
+SELECT CT.MemberID
+, CT.Dependent
+, MT.DateOfBirth
+, MT.Gender
+, CT.CaseNumber
+, PT.AdmitDate
+, DATEDIFF(CT.DischargeDate,CT.`Date`) AS LengthofStay
+-- use below in sql server
+--, DATEDIFF('day',CT.DischargeDate,CT.AdmissionDate) AS LengthofStay
+, CT.Diag
+, CASE WHEN DATEDIFF(CT.`Date`,CT.PrevDischargeDate) < 30 THEN 'Y' ELSE 'N' END AS ReAdmission
+-- use below in sql server
+--, CASE WHEN DATEDIFF('day',CT.AdmissionDate,CT.PrevDischargeDate) < 30 THEN 'Y' ELSE 'N' END AS ReAdmission
+, PT.Provider
+FROM (
+  SELECT *
+  , LAG(DischargeDate) OVER (
+      PARTITION BY MemberID, Dependent 
+      ORDER BY DischargeDate
+  ) AS PrevDischargeDate
+  FROM caseTable
+) CT
+INNER JOIN memberTable MT
+ON concat(CT.MemberID,CT.Dependent) = MT.MemberID
+INNER JOIN providerTable PT
+ON concat(CT.MemberID,CT.Dependent) = PT.MemberID
+AND CT.CaseNumber = PT.CaseNumber
+```
+
+# Problem 2
+```{sql, connection = sc}
+SELECT Diag
+, COUNT(*) AS AdmissionRate
+FROM caseTable
+GROUP BY Diag
+ORDER BY COUNT(*) DESC
+```
+
